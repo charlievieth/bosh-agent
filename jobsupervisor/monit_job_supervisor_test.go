@@ -36,20 +36,16 @@ var _ = Describe("monitJobSupervisor", func() {
 		timeService           *fakeclock.FakeClock
 	)
 
-	var jobFailureServerPort = 5000
-
-	getJobFailureServerPort := func() int {
-		jobFailureServerPort++
-		return jobFailureServerPort
-	}
-
 	BeforeEach(func() {
+		var err error
+		jobFailuresServerPort, err = FindOpenPort()
+		Expect(err).To(Succeed())
+
 		fs = fakesys.NewFakeFileSystem()
 		runner = fakesys.NewFakeCmdRunner()
 		client = fakemonit.NewFakeMonitClient()
 		logger = boshlog.NewLogger(boshlog.LevelNone)
 		dirProvider = boshdir.NewProvider("/var/vcap")
-		jobFailuresServerPort = getJobFailureServerPort()
 		timeService = fakeclock.NewFakeClock(time.Now())
 
 		monit = NewMonitJobSupervisor(

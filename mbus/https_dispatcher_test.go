@@ -16,10 +16,18 @@ import (
 	"github.com/cloudfoundry/bosh-agent/settings"
 )
 
-const targetURL = "https://user:pass@127.0.0.1:7789"
+const targetURLFormat = "https://user:pass@127.0.0.1:%d"
+
+var targetURL string
 
 // Confirm the targetURL is valid and can be listened on before running tests.
 func init() {
+	port, err := FindOpenPort()
+	if err != nil {
+		panic(err)
+	}
+	targetURL = fmt.Sprintf(targetURLFormat, port)
+
 	u, err := url.Parse(targetURL)
 	if err != nil {
 		panic(fmt.Sprintf("Invalid target URL: %s", err))
@@ -38,6 +46,10 @@ var _ = Describe("HTTPSDispatcher", func() {
 	)
 
 	BeforeEach(func() {
+		port, err := FindOpenPort()
+		Expect(err).ToNot(HaveOccurred())
+		targetURL = fmt.Sprintf(targetURLFormat, port)
+
 		logger = &fakelogger.FakeLogger{}
 		serverURL, err := url.Parse(targetURL)
 		Expect(err).ToNot(HaveOccurred())
@@ -216,7 +228,12 @@ var _ = Describe("HTTPSDispatcher", func() {
 			})
 			client := getHTTPClient()
 
-			response, err := client.Get("https://bad:creds@127.0.0.1:7789/example")
+			u, err := url.Parse(targetURL)
+			Expect(err).ToNot(HaveOccurred())
+			u.User = url.UserPassword("bad", "creds")
+			u.Path = "example"
+
+			response, err := client.Get(u.String())
 
 			Expect(err).ToNot(HaveOccurred())
 			Expect(response.StatusCode).To(BeNumerically("==", 401))

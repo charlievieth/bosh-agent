@@ -54,6 +54,7 @@ var _ = Describe("WindowsNetManager", func() {
 		fs                            boshsys.FileSystem
 		dirProvider                   boshdirs.Provider
 		tmpDir                        string
+		// macAddressDetector            *fakeMACAddressDetector
 	)
 	macAddressDetector := new(fakeMACAddressDetector)
 
@@ -71,6 +72,8 @@ var _ = Describe("WindowsNetManager", func() {
 	}
 
 	BeforeEach(func() {
+		// macAddressDetector = new(fakeMACAddressDetector)
+
 		runner = fakesys.NewFakeCmdRunner()
 		clock = fakeclock.NewFakeClock(time.Now())
 		logger := boshlog.NewLogger(boshlog.LevelNone)

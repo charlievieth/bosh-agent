@@ -8,7 +8,6 @@ import (
 	"errors"
 	"fmt"
 	"io/ioutil"
-	"math/rand"
 	"net"
 	"net/http"
 	"os"
@@ -87,26 +86,6 @@ var _ = BeforeSuite(func() {
 	WaitSvcExe, err = gexec.Build("github.com/cloudfoundry/bosh-agent/jobsupervisor/testdata/WaitSvc")
 	Expect(err).ToNot(HaveOccurred())
 })
-
-func findOpenPort() (int, error) {
-	const Base = 5000
-	rand.Seed(time.Now().UnixNano())
-
-	for i := 0; i < 50; i++ {
-		port := Base + rand.Intn(2000)
-		addr, err := net.ResolveTCPAddr("tcp", fmt.Sprintf("localhost:%d", port))
-		if err != nil {
-			return 0, err
-		}
-		l, err := net.ListenTCP("tcp", addr)
-		if err != nil {
-			continue
-		}
-		l.Close()
-		return port, nil
-	}
-	return 0, errors.New("could not find open port to listen on")
-}
 
 func testWindowsConfigs(jobName string) (WindowsProcessConfig, bool) {
 	var procs []WindowsProcess
@@ -280,7 +259,7 @@ var _ = Describe("WindowsJobSupervisor", func() {
 			once.Do(func() { Expect(buildPipeExe()).To(Succeed()) })
 
 			var err error
-			jobFailuresServerPort, err = findOpenPort()
+			jobFailuresServerPort, err = FindOpenPort()
 			Expect(err).To(Succeed())
 
 			const testExtPath = "testdata/job-service-wrapper"

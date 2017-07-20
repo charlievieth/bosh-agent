@@ -3,6 +3,7 @@ package mbus_test
 import (
 	"crypto/tls"
 	"errors"
+	"fmt"
 	"io/ioutil"
 	"net/http"
 	"net/url"
@@ -14,6 +15,7 @@ import (
 	. "github.com/onsi/gomega"
 
 	"crypto/x509"
+
 	boshhandler "github.com/cloudfoundry/bosh-agent/handler"
 	"github.com/cloudfoundry/bosh-agent/platform/fakes"
 	"github.com/cloudfoundry/bosh-agent/settings"
@@ -37,7 +39,10 @@ var _ = Describe("HTTPSHandler", func() {
 
 	Context("when the agent creates the handler with custom cert", func() {
 		BeforeEach(func() {
-			serverURL = "https://user:pass@localhost:6900"
+			port, err := FindOpenPort()
+			Expect(err).NotTo(HaveOccurred())
+			serverURL = fmt.Sprintf("https://user:pass@localhost:%d", port)
+
 			mbusURL, _ := url.Parse(serverURL)
 			logger := boshlog.NewLogger(boshlog.LevelNone)
 			fs = fakesys.NewFakeFileSystem()
@@ -95,7 +100,10 @@ var _ = Describe("HTTPSHandler", func() {
 
 	Context("when the agent is not configured with custom TLS", func() {
 		BeforeEach(func() {
-			serverURL = "https://user:pass@localhost:6900"
+			port, err := FindOpenPort()
+			Expect(err).NotTo(HaveOccurred())
+			serverURL = fmt.Sprintf("https://user:pass@localhost:%d", port)
+
 			mbusURL, _ := url.Parse(serverURL)
 			logger := boshlog.NewLogger(boshlog.LevelNone)
 			fs = fakesys.NewFakeFileSystem()
