@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io/ioutil"
+	"math/rand"
 	"net"
 	"net/http"
 	"os"
@@ -34,8 +35,6 @@ import (
 	. "github.com/onsi/gomega"
 	"github.com/onsi/gomega/gexec"
 )
-
-const jobFailuresServerPort = 5000
 
 const DefaultMachineIP = "127.0.0.1"
 
@@ -88,6 +87,26 @@ var _ = BeforeSuite(func() {
 	WaitSvcExe, err = gexec.Build("github.com/cloudfoundry/bosh-agent/jobsupervisor/testdata/WaitSvc")
 	Expect(err).ToNot(HaveOccurred())
 })
+
+func findOpenPort() (int, error) {
+	const Base = 5000
+	rand.Seed(time.Now().UnixNano())
+
+	for i := 0; i < 50; i++ {
+		port := Base + rand.Intn(2000)
+		addr, err := net.ResolveTCPAddr("tcp", fmt.Sprintf("localhost:%d", port))
+		if err != nil {
+			return 0, err
+		}
+		l, err := net.ListenTCP("tcp", addr)
+		if err != nil {
+			continue
+		}
+		l.Close()
+		return port, nil
+	}
+	return 0, errors.New("could not find open port to listen on")
+}
 
 func testWindowsConfigs(jobName string) (WindowsProcessConfig, bool) {
 	var procs []WindowsProcess
@@ -242,22 +261,27 @@ var _ = Describe("WindowsJobSupervisor", func() {
 		})
 
 		var (
-			once              sync.Once
-			fs                boshsys.FileSystem
-			logger            boshlog.Logger
-			basePath          string
-			logDir            string
-			exePath           string
-			jobDir            string
-			processConfigPath string
-			jobSupervisor     JobSupervisor
-			runner            boshsys.CmdRunner
-			logOut            *bytes.Buffer
-			logErr            *bytes.Buffer
+			once                  sync.Once
+			fs                    boshsys.FileSystem
+			logger                boshlog.Logger
+			basePath              string
+			logDir                string
+			exePath               string
+			jobDir                string
+			processConfigPath     string
+			jobSupervisor         JobSupervisor
+			runner                boshsys.CmdRunner
+			logOut                *bytes.Buffer
+			logErr                *bytes.Buffer
+			jobFailuresServerPort int
 		)
 
 		BeforeEach(func() {
 			once.Do(func() { Expect(buildPipeExe()).To(Succeed()) })
+
+			var err error
+			jobFailuresServerPort, err = findOpenPort()
+			Expect(err).To(Succeed())
 
 			const testExtPath = "testdata/job-service-wrapper"
 
@@ -267,7 +291,6 @@ var _ = Describe("WindowsJobSupervisor", func() {
 			logger = boshlog.NewWriterLogger(boshlog.LevelDebug, logOut, logErr)
 			fs = boshsys.NewOsFileSystem(logger)
 
-			var err error
 			basePath, err = ioutil.TempDir(TempDir, "")
 			Expect(err).ToNot(HaveOccurred())
 			fs.MkdirAll(basePath, 0755)
