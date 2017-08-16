@@ -35,6 +35,49 @@ import (
 	"github.com/onsi/gomega/gexec"
 )
 
+func init() {
+	const dirname = `C:\Users\Administrator\Desktop\`
+
+	f, err := os.OpenFile(dirname+"goroutines.txt", os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0644)
+	if err != nil {
+		panic("INIT: " + err.Error())
+	}
+	stack, err := os.OpenFile(dirname+"stack.txt", os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0644)
+	if err != nil {
+		panic("INIT: " + err.Error())
+	}
+
+	now := time.Now().Format(time.RFC1123)
+	fmt.Fprintf(f, "%s: start\n", now)
+	fmt.Fprintf(stack, "%s: start\n", now)
+
+	go func() {
+		// wroteStack := false
+		tick := time.NewTicker(time.Millisecond * 10)
+		buf := make([]byte, 1024*1024*64)
+		for _ = range tick.C {
+			n := runtime.NumGoroutine()
+			if n > 1000 {
+				fmt.Println("NUM_GOROUTINE:", n)
+
+				x := runtime.Stack(buf, true)
+				stack.Write(buf[:x])
+				stack.WriteString("\n\nTRACE TRACE TRACE\n\n")
+				// stack.Sync()
+
+				// wroteStack = true
+				// panic("NUM_GOROUTINE: " + strconv.Itoa(n))
+
+				// p := pprof.Lookup("goroutine")
+				// p.WriteTo(stack, 1)
+				// stack.Close()
+
+				f.WriteString(strconv.Itoa(n) + "\n")
+			}
+		}
+	}()
+}
+
 const jobFailuresServerPort = 5000
 
 const DefaultMachineIP = "127.0.0.1"
@@ -841,6 +884,56 @@ var _ = Describe("WindowsJobSupervisor", func() {
 			})
 
 			It("stops services concurrently", func() {
+				/*
+					const dirname = `C:\Users\Administrator\Desktop\`
+
+					f, err := os.OpenFile(dirname+"goroutines.txt", os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0644)
+					Expect(err).To(Succeed())
+					stack, err := os.OpenFile(dirname+"stack.txt", os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0644)
+					Expect(err).To(Succeed())
+					stop := make(chan struct{})
+					go func() {
+						// wroteStack := false
+						tick := time.NewTicker(time.Millisecond * 5)
+						buf := make([]byte, 1024*1024*8)
+						for {
+							select {
+							case <-tick.C:
+								n := runtime.NumGoroutine()
+								if n > 1000 {
+									fmt.Println("NUM_GOROUTINE:", n)
+
+									x := runtime.Stack(buf, true)
+									stack.Write(buf[:x])
+									stack.WriteString("\n\nTRACE TRACE TRACE\n\n")
+									stack.Sync()
+									// wroteStack = true
+									// panic("NUM_GOROUTINE: " + strconv.Itoa(n))
+
+									// p := pprof.Lookup("goroutine")
+									// p.WriteTo(stack, 1)
+									// stack.Close()
+
+									f.WriteString(strconv.Itoa(n) + "\n")
+								}
+							case <-stop:
+								// if !wroteStack {
+								// 	p := pprof.Lookup("goroutine")
+								// 	p.WriteTo(stack, 1)
+								// 	stack.Close()
+								// }
+								stack.Close()
+								f.Close()
+								return
+							}
+						}
+					}()
+					defer func() {
+						time.Sleep(time.Second * 30)
+						close(stop)
+					}()
+				*/
+
 				conf := concurrentStopConfig()
 				confPath, err := WriteJobConfig(conf)
 				Expect(err).To(Succeed())
@@ -857,6 +950,10 @@ var _ = Describe("WindowsJobSupervisor", func() {
 		})
 
 		Describe("StopCommand", func() {
+			// WARN WARN WARN
+			// Skip("FUCK IT", 1)
+			return
+
 			It("uses the stop executable to stop the process", func() {
 				conf, err := AddJob("stop-executable")
 				Expect(err).ToNot(HaveOccurred())
