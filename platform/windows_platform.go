@@ -4,11 +4,13 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
 
 	boshdpresolv "github.com/cloudfoundry/bosh-agent/infrastructure/devicepathresolver"
 	boshcert "github.com/cloudfoundry/bosh-agent/platform/cert"
@@ -39,6 +41,7 @@ type WindowsPlatform struct {
 	defaultNetworkResolver boshsettings.DefaultNetworkResolver
 	auditLogger            AuditLogger
 	uuidGenerator          boshuuid.Generator
+	logger                 boshlog.Logger
 }
 
 func NewWindowsPlatform(
@@ -68,61 +71,64 @@ func NewWindowsPlatform(
 		defaultNetworkResolver: defaultNetworkResolver,
 		auditLogger:            auditLogger,
 		uuidGenerator:          uuidGenerator,
+		logger:                 logger,
 	}
 }
 
-func (p WindowsPlatform) AssociateDisk(name string, settings boshsettings.DiskSettings) error {
+const winLogTag = "WindowsPlatform"
+
+func (p *WindowsPlatform) AssociateDisk(name string, settings boshsettings.DiskSettings) error {
 	return errors.New("unimplemented")
 }
 
-func (p WindowsPlatform) GetFs() (fs boshsys.FileSystem) {
+func (p *WindowsPlatform) GetFs() (fs boshsys.FileSystem) {
 	return p.fs
 }
 
-func (p WindowsPlatform) GetRunner() (runner boshsys.CmdRunner) {
+func (p *WindowsPlatform) GetRunner() (runner boshsys.CmdRunner) {
 	return p.cmdRunner
 }
 
-func (p WindowsPlatform) GetCompressor() (compressor boshcmd.Compressor) {
+func (p *WindowsPlatform) GetCompressor() (compressor boshcmd.Compressor) {
 	return p.compressor
 }
 
-func (p WindowsPlatform) GetCopier() (copier boshcmd.Copier) {
+func (p *WindowsPlatform) GetCopier() (copier boshcmd.Copier) {
 	return p.copier
 }
 
-func (p WindowsPlatform) GetDirProvider() (dirProvider boshdir.Provider) {
+func (p *WindowsPlatform) GetDirProvider() (dirProvider boshdir.Provider) {
 	return p.dirProvider
 }
 
-func (p WindowsPlatform) GetVitalsService() (service boshvitals.Service) {
+func (p *WindowsPlatform) GetVitalsService() (service boshvitals.Service) {
 	return p.vitalsService
 }
 
-func (p WindowsPlatform) GetDevicePathResolver() (devicePathResolver boshdpresolv.DevicePathResolver) {
+func (p *WindowsPlatform) GetDevicePathResolver() (devicePathResolver boshdpresolv.DevicePathResolver) {
 	return p.devicePathResolver
 }
 
-func (p WindowsPlatform) GetAuditLogger() AuditLogger {
+func (p *WindowsPlatform) GetAuditLogger() AuditLogger {
 	return p.auditLogger
 }
 
-func (p WindowsPlatform) SetupRuntimeConfiguration() error {
+func (p *WindowsPlatform) SetupRuntimeConfiguration() error {
 	return setupRuntimeConfiguration()
 }
 
-func (p WindowsPlatform) CreateUser(username, _ string) error {
+func (p *WindowsPlatform) CreateUser(username, _ string) error {
 	if err := createUserProfile(username); err != nil {
 		return bosherr.WrapError(err, "CreateUser: creating user")
 	}
 	return nil
 }
 
-func (p WindowsPlatform) AddUserToGroups(username string, groups []string) (err error) {
+func (p *WindowsPlatform) AddUserToGroups(username string, groups []string) (err error) {
 	return
 }
 
-func (p WindowsPlatform) findEphemeralUsersMatching(reg *regexp.Regexp) ([]string, error) {
+func (p *WindowsPlatform) findEphemeralUsersMatching(reg *regexp.Regexp) ([]string, error) {
 	users, err := localAccountNames()
 	if err != nil {
 		return nil, bosherr.WrapError(err, "Getting list of users")
@@ -139,7 +145,7 @@ func (p WindowsPlatform) findEphemeralUsersMatching(reg *regexp.Regexp) ([]strin
 	return matchingUsers, nil
 }
 
-func (p WindowsPlatform) DeleteEphemeralUsersMatching(pattern string) error {
+func (p *WindowsPlatform) DeleteEphemeralUsersMatching(pattern string) error {
 	reg, err := regexp.Compile(pattern)
 	if err != nil {
 		return bosherr.WrapError(err, "Compiling regexp")
@@ -158,11 +164,11 @@ func (p WindowsPlatform) DeleteEphemeralUsersMatching(pattern string) error {
 	return nil
 }
 
-func (p WindowsPlatform) SetupRootDisk(ephemeralDiskPath string) (err error) {
+func (p *WindowsPlatform) SetupRootDisk(ephemeralDiskPath string) (err error) {
 	return
 }
 
-func (p WindowsPlatform) SetupSSH(publicKey []string, username string) error {
+func (p *WindowsPlatform) SetupSSH(publicKey []string, username string) error {
 
 	homedir, err := userHomeDirectory(username)
 	if err != nil {
@@ -197,11 +203,11 @@ func (p WindowsPlatform) SetupSSH(publicKey []string, username string) error {
 	return nil
 }
 
-func (p WindowsPlatform) SetUserPassword(user, encryptedPwd string) (err error) {
+func (p *WindowsPlatform) SetUserPassword(user, encryptedPwd string) (err error) {
 	return
 }
 
-func (p WindowsPlatform) SaveDNSRecords(dnsRecords boshsettings.DNSRecords, hostname string) (err error) {
+func (p *WindowsPlatform) SaveDNSRecords(dnsRecords boshsettings.DNSRecords, hostname string) (err error) {
 	windir := os.Getenv("windir")
 	if windir == "" {
 		return bosherr.Error("SaveDNSRecords: missing %WINDIR% env variable")
@@ -240,39 +246,35 @@ func (p WindowsPlatform) SaveDNSRecords(dnsRecords boshsettings.DNSRecords, host
 	return
 }
 
-func (p WindowsPlatform) SetupIPv6(config boshsettings.IPv6) error {
+func (p *WindowsPlatform) SetupIPv6(config boshsettings.IPv6) error {
 	return nil
 }
 
-func (p WindowsPlatform) SetupHostname(hostname string) (err error) {
+func (p *WindowsPlatform) SetupHostname(hostname string) (err error) {
 	return
 }
 
-func (p WindowsPlatform) SetupNetworking(networks boshsettings.Networks) (err error) {
+func (p *WindowsPlatform) SetupNetworking(networks boshsettings.Networks) (err error) {
 	return p.netManager.SetupNetworking(networks, nil)
 }
 
-func (p WindowsPlatform) GetConfiguredNetworkInterfaces() (interfaces []string, err error) {
+func (p *WindowsPlatform) GetConfiguredNetworkInterfaces() (interfaces []string, err error) {
 	return p.netManager.GetConfiguredNetworkInterfaces()
 }
 
-func (p WindowsPlatform) GetCertManager() (certManager boshcert.Manager) {
+func (p *WindowsPlatform) GetCertManager() (certManager boshcert.Manager) {
 	return p.certManager
 }
 
-func (p WindowsPlatform) SetupLogrotate(groupName, basePath, size string) (err error) {
+func (p *WindowsPlatform) SetupLogrotate(groupName, basePath, size string) (err error) {
 	return
 }
 
-func (p WindowsPlatform) SetTimeWithNtpServers(servers []string) (err error) {
+func (p *WindowsPlatform) SetTimeWithNtpServers(servers []string) error {
 	if len(servers) == 0 {
-		return
+		return nil
 	}
-	var (
-		stderr string
-	)
-	ntpServers := strings.Join(servers, " ")
-	_, stderr, _, err = p.cmdRunner.RunCommand("powershell.exe",
+	_, stderr, _, err := p.cmdRunner.RunCommand("-Command",
 		"new-netfirewallrule",
 		"-displayname", "NTP",
 		"-direction", "outbound",
@@ -280,40 +282,41 @@ func (p WindowsPlatform) SetTimeWithNtpServers(servers []string) (err error) {
 		"-protocol", "udp",
 		"-RemotePort", "123")
 	if err != nil {
-		err = bosherr.WrapErrorf(err, "SetTimeWithNtpServers  %s", stderr)
-		return
+		return bosherr.WrapErrorf(err, "SetTimeWithNtpServers  %s", stderr)
 	}
 
-	_, _, _, _ = p.cmdRunner.RunCommand("net", "stop", "w32time")
-	manualPeerList := fmt.Sprintf("/manualpeerlist:\"%s\"", ntpServers)
-	_, stderr, _, err = p.cmdRunner.RunCommand("w32tm", "/config", "/syncfromflags:manual", manualPeerList)
+	p.runCommand("net.exe", "STOP", "w32time")
+
+	out, err := p.runCommand("w32tm.exe", "/config", "/syncfromflags:manual",
+		fmt.Sprintf("/manualpeerlist:\"%s\"", strings.Join(servers, " ")))
 	if err != nil {
-		err = bosherr.WrapErrorf(err, "SetTimeWithNtpServers %s", stderr)
-		return
+		return bosherr.WrapErrorf(err, "SetTimeWithNtpServers %s", out)
 	}
-	_, _, _, _ = p.cmdRunner.RunCommand("net", "start", "w32time")
-	_, stderr, _, err = p.cmdRunner.RunCommand("w32tm", "/config", "/update")
+
+	p.runCommand("net.exe", "START", "w32time")
+
+	out, err = p.runCommand("w32tm.exe", "/config", "/update")
 	if err != nil {
-		err = bosherr.WrapErrorf(err, "SetTimeWithNtpServers %s", stderr)
-		return
+		return bosherr.WrapErrorf(err, "SetTimeWithNtpServers %s", out)
 	}
-	_, stderr, _, err = p.cmdRunner.RunCommand("w32tm", "/resync", "/rediscover")
+
+	out, err = p.runCommand("w32tm.exe", "/resync", "/rediscover")
 	if err != nil {
-		err = bosherr.WrapErrorf(err, "SetTimeWithNtpServers %s", stderr)
-		return
+		return bosherr.WrapErrorf(err, "SetTimeWithNtpServers %s", out)
 	}
+
+	return nil
+}
+
+func (p *WindowsPlatform) SetupEphemeralDiskWithPath(devicePath string, desiredSwapSizeInBytes *uint64) (err error) {
 	return
 }
 
-func (p WindowsPlatform) SetupEphemeralDiskWithPath(devicePath string, desiredSwapSizeInBytes *uint64) (err error) {
+func (p *WindowsPlatform) SetupRawEphemeralDisks(devices []boshsettings.DiskSettings) (err error) {
 	return
 }
 
-func (p WindowsPlatform) SetupRawEphemeralDisks(devices []boshsettings.DiskSettings) (err error) {
-	return
-}
-
-func (p WindowsPlatform) SetupDataDir() error {
+func (p *WindowsPlatform) SetupDataDir() error {
 	dataDir := p.dirProvider.DataDir()
 	sysDataDir := filepath.Join(dataDir, "sys")
 	logDir := filepath.Join(sysDataDir, "log")
@@ -332,11 +335,11 @@ func (p WindowsPlatform) SetupDataDir() error {
 	return nil
 }
 
-func (p WindowsPlatform) SetupHomeDir() error {
+func (p *WindowsPlatform) SetupHomeDir() error {
 	return nil
 }
 
-func (p WindowsPlatform) SetupTmpDir() error {
+func (p *WindowsPlatform) SetupTmpDir() error {
 	boshTmpDir := p.dirProvider.TmpDir()
 
 	err := p.fs.MkdirAll(boshTmpDir, tmpDirPermissions)
@@ -357,11 +360,11 @@ func (p WindowsPlatform) SetupTmpDir() error {
 	return nil
 }
 
-func (p WindowsPlatform) SetupLogDir() error {
+func (p *WindowsPlatform) SetupLogDir() error {
 	return nil
 }
 
-func (p WindowsPlatform) SetupBlobsDir() error {
+func (p *WindowsPlatform) SetupBlobsDir() error {
 	blobsDirPath := p.dirProvider.BlobsDir()
 	err := p.fs.MkdirAll(blobsDirPath, blobsDirPermissions)
 	if err != nil {
@@ -370,79 +373,79 @@ func (p WindowsPlatform) SetupBlobsDir() error {
 	return nil
 }
 
-func (p WindowsPlatform) SetupLoggingAndAuditing() error {
+func (p *WindowsPlatform) SetupLoggingAndAuditing() error {
 	return nil
 }
 
-func (p WindowsPlatform) MountPersistentDisk(diskSettings boshsettings.DiskSettings, mountPoint string) (err error) {
+func (p *WindowsPlatform) MountPersistentDisk(diskSettings boshsettings.DiskSettings, mountPoint string) (err error) {
 	return
 }
 
-func (p WindowsPlatform) UnmountPersistentDisk(diskSettings boshsettings.DiskSettings) (didUnmount bool, err error) {
+func (p *WindowsPlatform) UnmountPersistentDisk(diskSettings boshsettings.DiskSettings) (didUnmount bool, err error) {
 	return
 }
 
-func (p WindowsPlatform) GetEphemeralDiskPath(diskSettings boshsettings.DiskSettings) string {
+func (p *WindowsPlatform) GetEphemeralDiskPath(diskSettings boshsettings.DiskSettings) string {
 	return ""
 }
 
-func (p WindowsPlatform) GetFileContentsFromCDROM(filePath string) (contents []byte, err error) {
+func (p *WindowsPlatform) GetFileContentsFromCDROM(filePath string) (contents []byte, err error) {
 	return p.fs.ReadFile("D:/" + filePath)
 }
 
-func (p WindowsPlatform) GetFilesContentsFromDisk(diskPath string, fileNames []string) (contents [][]byte, err error) {
+func (p *WindowsPlatform) GetFilesContentsFromDisk(diskPath string, fileNames []string) (contents [][]byte, err error) {
 	return
 }
 
-func (p WindowsPlatform) MigratePersistentDisk(fromMountPoint, toMountPoint string) (err error) {
+func (p *WindowsPlatform) MigratePersistentDisk(fromMountPoint, toMountPoint string) (err error) {
 	return
 }
 
-func (p WindowsPlatform) IsMountPoint(path string) (string, bool, error) {
+func (p *WindowsPlatform) IsMountPoint(path string) (string, bool, error) {
 	return "", true, nil
 }
 
-func (p WindowsPlatform) IsPersistentDiskMounted(diskSettings boshsettings.DiskSettings) (bool, error) {
+func (p *WindowsPlatform) IsPersistentDiskMounted(diskSettings boshsettings.DiskSettings) (bool, error) {
 	return true, nil
 }
 
-func (p WindowsPlatform) IsPersistentDiskMountable(diskSettings boshsettings.DiskSettings) (bool, error) {
+func (p *WindowsPlatform) IsPersistentDiskMountable(diskSettings boshsettings.DiskSettings) (bool, error) {
 	return true, nil
 }
 
-func (p WindowsPlatform) StartMonit() (err error) {
+func (p *WindowsPlatform) StartMonit() (err error) {
 	return
 }
 
-func (p WindowsPlatform) SetupMonitUser() (err error) {
+func (p *WindowsPlatform) SetupMonitUser() (err error) {
 	return
 }
 
-func (p WindowsPlatform) GetMonitCredentials() (username, password string, err error) {
+func (p *WindowsPlatform) GetMonitCredentials() (username, password string, err error) {
 	return
 }
 
-func (p WindowsPlatform) PrepareForNetworkingChange() error {
+func (p *WindowsPlatform) PrepareForNetworkingChange() error {
 	return nil
 }
 
-func (p WindowsPlatform) CleanIPMacAddressCache(ip string) error {
+func (p *WindowsPlatform) CleanIPMacAddressCache(ip string) error {
 	return nil
 }
 
-func (p WindowsPlatform) RemoveDevTools(packageFileListPath string) error {
+func (p *WindowsPlatform) RemoveDevTools(packageFileListPath string) error {
 	return nil
 }
 
-func (p WindowsPlatform) RemoveStaticLibraries(packageFileListPath string) error {
+func (p *WindowsPlatform) RemoveStaticLibraries(packageFileListPath string) error {
 	return nil
 }
 
-func (p WindowsPlatform) GetDefaultNetwork() (boshsettings.Network, error) {
+func (p *WindowsPlatform) GetDefaultNetwork() (boshsettings.Network, error) {
 	return p.defaultNetworkResolver.GetDefaultNetwork()
 }
 
-func (p WindowsPlatform) GetHostPublicKey() (string, error) {
+func (p *WindowsPlatform) GetHostPublicKey() (string, error) {
 
 	if err := sshEnabled(); err != nil {
 		return "", bosherr.WrapError(err, "OpenSSH is not running")
@@ -474,15 +477,58 @@ func (p WindowsPlatform) GetHostPublicKey() (string, error) {
 	return key, nil
 }
 
-func (p WindowsPlatform) DeleteARPEntryWithIP(ip string) error {
-	_, _, _, err := p.cmdRunner.RunCommand("arp", "-d", ip)
+func (p *WindowsPlatform) DeleteARPEntryWithIP(ip string) error {
+	_, err := p.runCommand("ARP.EXE", "-d", ip)
 	if err != nil {
 		return bosherr.WrapError(err, "Deleting arp entry")
 	}
-
 	return nil
 }
 
-func (p WindowsPlatform) SetupRecordsJSONPermission(path string) error {
+func (p *WindowsPlatform) SetupRecordsJSONPermission(path string) error {
 	return nil
+}
+
+type limitedWriter struct {
+	r  io.Writer
+	n  int64
+	mu sync.Mutex
+}
+
+func (l *limitedWriter) Write(p []byte) (n int, err error) {
+	l.mu.Lock()
+	if l.n > 0 {
+		if int64(len(p)) > l.n {
+			p = p[:l.n]
+		}
+		n, err = l.r.Write(p)
+		l.n -= int64(n)
+	}
+	l.mu.Unlock()
+	return
+}
+
+func (p *WindowsPlatform) runCommand(name string, args ...string) (string, error) {
+	const errFmt = "Error running command: %s\n" +
+		"#### COMBINED OUTPUT ####:\n" +
+		"%s\n" +
+		"#########################\n"
+
+	cmdStr := name + strings.Join(args, " ")
+	p.logger.Debug(winLogTag, "Running command: %s", cmdStr)
+
+	var out bytes.Buffer
+	w := limitedWriter{r: &out, n: 1024 * 1024 * 100} // 100MB
+
+	cmd := exec.Command(name, args...)
+	cmd.Stdout = &w
+	cmd.Stderr = &w
+
+	err := cmd.Run()
+	if err != nil {
+		p.logger.Error(winLogTag, errFmt, cmdStr,
+			string(bytes.TrimSpace(out.Bytes())))
+		return out.String(), err
+	}
+	return out.String(), nil
 }
