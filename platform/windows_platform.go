@@ -382,6 +382,7 @@ func (p WindowsPlatform) UnmountPersistentDisk(diskSettings boshsettings.DiskSet
 	return
 }
 
+// CEV: Bootstrap needs this!
 func (p WindowsPlatform) GetEphemeralDiskPath(diskSettings boshsettings.DiskSettings) string {
 	return ""
 }

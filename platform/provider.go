@@ -46,7 +46,10 @@ type Options struct {
 	Linux LinuxOptions
 }
 
-func NewProvider(logger boshlog.Logger, dirProvider boshdirs.Provider, statsCollector boshstats.Collector, fs boshsys.FileSystem, options Options, bootstrapState *BootstrapState, clock clock.Clock, auditLogger AuditLogger) Provider {
+func NewProvider(logger boshlog.Logger, dirProvider boshdirs.Provider,
+	statsCollector boshstats.Collector, fs boshsys.FileSystem, options Options,
+	bootstrapState *BootstrapState, clock clock.Clock, auditLogger AuditLogger) Provider {
+
 	runner := boshsys.NewExecCmdRunner(logger)
 
 	diskManagerOpts := boshdisk.LinuxDiskManagerOpts{
@@ -78,8 +81,26 @@ func NewProvider(logger boshlog.Logger, dirProvider boshdirs.Provider, statsColl
 	interfaceAddressesValidator := boship.NewInterfaceAddressesValidator(interfaceAddressesProvider)
 	dnsValidator := boshnet.NewDNSValidator(fs)
 
-	centosNetManager := boshnet.NewCentosNetManager(fs, runner, ipResolver, interfaceConfigurationCreator, interfaceAddressesValidator, dnsValidator, arping, logger)
-	ubuntuNetManager := boshnet.NewUbuntuNetManager(fs, runner, ipResolver, interfaceConfigurationCreator, interfaceAddressesValidator, dnsValidator, arping, logger)
+	centosNetManager := boshnet.NewCentosNetManager(
+		fs,
+		runner,
+		ipResolver,
+		interfaceConfigurationCreator,
+		interfaceAddressesValidator,
+		dnsValidator,
+		arping,
+		logger,
+	)
+	ubuntuNetManager := boshnet.NewUbuntuNetManager(
+		fs,
+		runner,
+		ipResolver,
+		interfaceConfigurationCreator,
+		interfaceAddressesValidator,
+		dnsValidator,
+		arping,
+		logger,
+	)
 
 	windowsNetManager := boshnet.NewWindowsNetManager(
 		runner,
