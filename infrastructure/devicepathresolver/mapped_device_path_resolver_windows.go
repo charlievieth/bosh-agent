@@ -6,6 +6,19 @@ type volume struct {
 	LUN       int
 }
 
+// Notes:
+//
+// - Looks like we can use the TargetID to map disks (WMIC.exe DISKDRIVE LIST FULL /FORMAT:textvaluelist.xsl)
+
+// Initialize Disk
+//
+// select disk 00
+// attributes disk clear readonly
+// online disk
+// convert mbr
+// create partition primary
+// assign letter=XXX
+
 // Disk Device to Device Name Mapping
 //
 // http://docs.aws.amazon.com/AWSEC2/latest/WindowsGuide/ec2-windows-volumes.html#windows-volume-mapping
