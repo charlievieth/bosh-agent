@@ -10,20 +10,25 @@ import (
 	"time"
 	"unsafe"
 
+	"github.com/cloudfoundry/bosh-utils/logger"
+
 	"golang.org/x/sys/windows"
 	"golang.org/x/sys/windows/svc"
 	"golang.org/x/sys/windows/svc/mgr"
 )
 
+const logTag = "winsvc"
+
 // Mgr is used to manage Windows services.
 type Mgr struct {
-	m     *mgr.Mgr
-	match func(description string) bool
+	m      *mgr.Mgr
+	match  func(description string) bool
+	logger logger.Logger
 }
 
 // Connect returns a new Mgr that will monitor all services with descriptions
 // matched by match.  If match is nil all services are matched.
-func Connect(match func(description string) bool) (*Mgr, error) {
+func Connect(match func(description string) bool, logger logger.Logger) (*Mgr, error) {
 	m, err := mgr.Connect()
 	if err != nil {
 		return nil, err
@@ -223,6 +228,7 @@ func waitPending(s *mgr.Service, pendingState svc.State) (svc.Status, error) {
 	// Arbitrary timeout to prevent misbehaving
 	// services from triggering an infinite loop.
 	const Timeout = time.Minute * 2
+	const MaxWaitExtensions = 10
 
 	if pendingState != svc.StartPending && pendingState != svc.StopPending {
 		// This is a programming error and really should be a panic.
@@ -239,6 +245,7 @@ func waitPending(s *mgr.Service, pendingState svc.State) (svc.Status, error) {
 	checkpoint := start
 	oldCheckpoint := status.CheckPoint
 	highCPU := 0
+	extendWait := 0
 
 	for status.State == pendingState {
 		waitHint, interval := calculateWaitHint(status)
@@ -280,6 +287,11 @@ func waitPending(s *mgr.Service, pendingState svc.State) (svc.Status, error) {
 
 		// Exceeded our timeout
 		case time.Since(start) > Timeout:
+			if extendWait < MaxWaitExtensions {
+				// LOG HERE
+				extendWait++
+				break
+			}
 			err := &TransitionError{
 				Msg:      "timeout waiting for state transition",
 				Name:     s.Name,
