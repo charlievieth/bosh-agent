@@ -14,11 +14,74 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"time"
 
 	"github.com/cloudfoundry/bosh-agent/jobsupervisor/pipe/syslog"
 )
+
+const DefaultThreshold = time.Second * 5
+const MinThreshold = time.Millisecond * 100
+
+type LogWriter struct {
+	w         io.Writer
+	name      string
+	count     int64         // number of writes
+	threshold time.Duration // writes longer than this are considered long
+}
+
+func NewLogWriter(w io.Writer, name string, threshold time.Duration) *LogWriter {
+	return &LogWriter{
+		w:         w,
+		name:      name,
+		threshold: threshold,
+	}
+}
+
+type WriteResult struct {
+	N   int
+	Err error
+}
+
+func (w *LogWriter) Write(p []byte) (int, error) {
+	// CEV: not adding a mutex here to preserve original behavior
+	//
+	// CEV: this is likely unnecessary
+	writeID := atomic.AddInt64(&w.count, 1)
+
+	ch := make(chan WriteResult, 1)
+	go func() {
+		n, err := w.w.Write(p)
+		ch <- WriteResult{N: n, Err: err}
+	}()
+
+	start := time.Now()
+	to := time.NewTicker(w.threshold)
+	defer to.Stop()
+
+	longwrite := false
+	for i := 0; ; i++ {
+		select {
+		case t := <-to.C:
+			log.Printf("LONG_WRITE [%s] [%d-%d] WAITING: %s", w.name, writeID, i, t.Sub(start))
+			longwrite = true
+		case res := <-ch:
+			switch {
+			case longwrite && res.Err != nil:
+				log.Printf("LONG_WRITE [%s] [%d-%d] ERROR (%s): wrote %d bytes in: %s",
+					w.name, writeID, i, res.Err, res.N, time.Since(start))
+			case longwrite:
+				log.Printf("LONG_WRITE [%s] [%d-%d] COMPLETE: wrote %d bytes in: %s",
+					w.name, writeID, i, res.N, time.Since(start))
+			case res.Err != nil:
+				log.Printf("SHORT_WRITE [%s] [%d-%d] ERROR: %s", w.name, writeID, i, res.Err)
+			}
+			return res.N, res.Err
+		}
+	}
+	panic("unreachable")
+}
 
 type noopWriter struct{}
 
@@ -40,6 +103,9 @@ type Config struct {
 	SyslogPort      string // "SYSLOG_PORT"
 	SyslogTransport string // "SYSLOG_TRANSPORT"
 	MachineIP       string // "MACHINE_IP"
+
+	// WARN NEW
+	WriteThreshold time.Duration // "WRITE_THRESHOLD"
 }
 
 func ParseConfig() *Config {
@@ -52,6 +118,13 @@ func ParseConfig() *Config {
 		SyslogTransport: os.Getenv(EnvPrefix + "SYSLOG_TRANSPORT"),
 		MachineIP:       os.Getenv(EnvPrefix + "MACHINE_IP"),
 	}
+
+	d, err := time.ParseDuration(os.Getenv(EnvPrefix + "WRITE_THRESHOLD"))
+	if err != nil || d < MinThreshold {
+		d = DefaultThreshold
+	}
+	c.WriteThreshold = d
+
 	if c.ServiceName == "" {
 		c.ServiceName = os.Args[0]
 	}
@@ -355,14 +428,20 @@ func main() {
 		exit(1)
 	}
 
-	var stdout io.Writer = os.Stdout
-	var stderr io.Writer = os.Stderr
+	var stdout io.Writer = NewLogWriter(os.Stdout, "stdout", conf.WriteThreshold)
+	var stderr io.Writer = NewLogWriter(os.Stderr, "stderr", conf.WriteThreshold)
 
 	outw, errw, err := conf.Syslog()
 	switch err {
 	case nil:
-		stdout = io.MultiWriter(os.Stdout, &BulletproofWriter{w: outw})
-		stderr = io.MultiWriter(os.Stderr, &BulletproofWriter{w: errw})
+		stdout = io.MultiWriter(
+			os.Stdout,
+			NewLogWriter(&BulletproofWriter{w: outw}, "syslog-stdout", conf.WriteThreshold),
+		)
+		stderr = io.MultiWriter(
+			os.Stderr,
+			NewLogWriter(&BulletproofWriter{w: errw}, "syslog-stderr", conf.WriteThreshold),
+		)
 	case errIncompleteSyslogConfig:
 		log.Println(err) // log and ignore
 	default:
