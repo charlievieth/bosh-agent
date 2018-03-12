@@ -14,10 +14,12 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"syscall"
 	"time"
 
+	"code.cloudfoundry.org/lager"
 	"github.com/cloudfoundry/bosh-agent/jobsupervisor/pipe/syslog"
 )
 
@@ -29,6 +31,7 @@ type LogWriter struct {
 	name      string
 	count     int64         // number of writes
 	threshold time.Duration // writes longer than this are considered long
+	mu        sync.Mutex
 }
 
 func NewLogWriter(w io.Writer, name string, threshold time.Duration) *LogWriter {
@@ -45,9 +48,8 @@ type WriteResult struct {
 }
 
 func (w *LogWriter) Write(p []byte) (int, error) {
-	// CEV: not adding a mutex here to preserve original behavior
-	//
-	// CEV: this is likely unnecessary
+	w.mu.Lock()
+	defer w.mu.Unlock()
 	writeID := atomic.AddInt64(&w.count, 1)
 
 	ch := make(chan WriteResult, 1)
@@ -80,7 +82,6 @@ func (w *LogWriter) Write(p []byte) (int, error) {
 			return res.N, res.Err
 		}
 	}
-	panic("unreachable")
 }
 
 type noopWriter struct{}
@@ -408,7 +409,21 @@ func ParseArgs() (path string, args []string, err error) {
 	return
 }
 
+func StartHeartbeat(logger lager.Logger) {
+	start := time.Now()
+	last := start
+	tick := time.NewTicker(time.Second * 5)
+	for t := range tick.C {
+		logger.Info("ping", lager.Data{
+			"uptime":   t.Sub(start),
+			"interval": t.Sub(last),
+		})
+		last = t
+	}
+}
+
 func main() {
+
 	conf := ParseConfig()
 	conf.InitLog()
 	log.Printf("pipe: configuration: %+v", conf)
@@ -447,6 +462,13 @@ func main() {
 	default:
 		log.Printf("syslog: error connecting: %s", err)
 	}
+
+	lagerStdout := lager.NewLogger("pipe.stdout.heartbeat")
+	lager.NewWriterSink(stdout, lager.DEBUG)
+	lagerStderr := lager.NewLogger("pipe.stderr.heartbeat")
+	lager.NewWriterSink(stderr, lager.DEBUG)
+	go StartHeartbeat(lagerStdout)
+	go StartHeartbeat(lagerStderr)
 
 	log.Println("pipe: starting")
 	exitCode, err := conf.Run(path, args, stdout, stderr)
